@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::ffi::CString;
 use std::marker;
 use std::ptr;
@@ -133,6 +134,35 @@ impl<'repo> Drop for Branches<'repo> {
     }
 }
 
+impl<'repo> Eq for Branch<'repo> {}
+
+impl<'repo> Ord for Branch<'repo> {
+    fn cmp(&self, rhs: &Self) -> Ordering {
+        match (self.name(), rhs.name()) {
+            (Ok(Some(lname)), Ok(Some(rname))) =>
+                lname.cmp(rname),
+            (Ok(Some(_)), Ok(None)) | (Ok(Some(_)), Err(_)) =>
+                Ordering::Less,
+            (Ok(None), Ok(Some(_))) | (Err(_), Ok(Some(_))) =>
+                Ordering::Greater,
+            _ =>
+                self.get().cmp(rhs.get())
+        }
+    }
+}
+
+impl<'repo> PartialEq for Branch<'repo> {
+    fn eq(&self, rhs: &Self) -> bool {
+        self.cmp(rhs) == Ordering::Equal
+    }
+}
+
+impl<'repo> PartialOrd for Branch<'repo> {
+    fn partial_cmp(&self, rhs: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(rhs))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use BranchType;
@@ -158,5 +188,40 @@ mod tests {
         b1.set_upstream(None).unwrap();
 
         b1.delete().unwrap();
+    }
+
+    #[test]
+    fn cmp() {
+        use std::cmp::Ordering;
+
+        let (_td, repo) = ::test::repo_init();
+        let head = repo.head().unwrap();
+        let target = head.target().unwrap();
+        let commit = repo.find_commit(target).unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &repo.signature().unwrap(),
+            &repo.signature().unwrap(),
+            "initial",
+            &commit.tree().unwrap(),
+            &[&commit]
+        ).unwrap();
+        let commit2 = repo.find_commit(target).unwrap();
+
+        let foo = repo.branch("foo", &commit, false).unwrap();
+        let bar = repo.branch("bar", &commit, false).unwrap();
+        let moo = repo.branch("moo", &commit2, false).unwrap();
+
+        assert_eq!(foo.cmp(&bar), Ordering::Greater);
+        assert_eq!(bar.cmp(&foo), Ordering::Less);
+        assert_eq!(foo.cmp(&foo), Ordering::Equal);
+        assert!(foo == foo);
+        assert!(foo != bar);
+        assert!(bar != foo);
+
+        assert_eq!(foo.cmp(&moo), Ordering::Less);
+        assert_eq!(moo.cmp(&foo), Ordering::Greater);
+        assert!(foo != moo);
+        assert!(moo != foo);
     }
 }
